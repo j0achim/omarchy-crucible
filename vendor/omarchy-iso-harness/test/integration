@@ -67,7 +67,12 @@ else
   done
 fi
 
-omarchy-pkg-add qemu-full edk2-ovmf socat imagemagick tesseract tesseract-data-eng mtools
+# Crucible: this assumes an Omarchy host (upstream is only ever run from
+# one). On any other host — a GitHub Actions runner, say — install the
+# equivalent packages some other way first and skip this.
+if command -v omarchy-pkg-add >/dev/null; then
+  omarchy-pkg-add qemu-full edk2-ovmf socat imagemagick tesseract tesseract-data-eng mtools
+fi
 
 export OMARCHY_INTEGRATION_ISO
 OMARCHY_INTEGRATION_ISO=$(realpath "$ISO")

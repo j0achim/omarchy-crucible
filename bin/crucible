@@ -63,7 +63,9 @@ cmd_build_golden() {
   local iso="$RELEASE_DIR/omarchy-$version.iso"
   [[ -f $iso ]] || cmd_fetch_iso "$version"
 
-  command -v omarchy-pkg-add >/dev/null && omarchy-pkg-add qemu-full edk2-ovmf socat imagemagick tesseract tesseract-data-eng mtools
+  if command -v omarchy-pkg-add >/dev/null; then
+    omarchy-pkg-add qemu-full edk2-ovmf socat imagemagick tesseract tesseract-data-eng mtools
+  fi
   "$VENDOR_DIR/test/integration" "$iso" install-only --reuse-base --no-preview
   echo "Golden image ready. See $VENDOR_DIR/test-runs/*/base.qcow2."
 }
