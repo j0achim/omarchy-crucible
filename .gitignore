@@ -1,0 +1,4 @@
+/vendor/omarchy-iso-harness/test-runs/
+*.qcow2
+*.iso
+*.iso.sha256

@@ -1,0 +1,113 @@
+#!/bin/bash
+#
+# Crucible: disposable-VM test harness for Omarchy plugins. Wraps a vendored
+# copy of omacom/omarchy-iso's official QEMU test harness (see
+# vendor/omarchy-iso-harness/) with a plugin-deploy scenario
+# (vendor/omarchy-iso-harness/test/integration.d/plugin-deploy-test.sh).
+#
+# Usage:
+#   crucible fetch-iso [version]              Download + checksum-verify the
+#                                              official Omarchy ISO into the
+#                                              cache dir (default version:
+#                                              see OMARCHY_ISO_VERSION below)
+#   crucible build-golden [version]           Run the unattended cidata
+#                                              install once, producing a
+#                                              reusable base image with
+#                                              autologin baked in
+#   crucible test <plugin-dir> [options]      Deploy and test a plugin
+#     --mode everyday|fidelity                (default: everyday)
+#     --section left|center|right             (default: right)
+#     --headless                              Tear down after the automated
+#                                              gate (default; CI-safe)
+#     --handoff                               Leave the VM running with a
+#                                              VNC display exported after
+#                                              the gate passes, for manual
+#                                              inspection
+#     --iso PATH                              Override the ISO path
+#
+# The base image (and everything else QEMU-related) is a local build
+# artifact — never shared, never committed. Delete
+# ~/.cache/crucible/ any time; every command here regenerates what it needs.
+
+set -euo pipefail
+
+REPO_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+VENDOR_DIR="$REPO_DIR/vendor/omarchy-iso-harness"
+
+OMARCHY_ISO_VERSION="${OMARCHY_ISO_VERSION:-4.0.1}"
+CACHE_DIR="${CRUCIBLE_CACHE_DIR:-$HOME/.cache/crucible}"
+RELEASE_DIR="$CACHE_DIR/release"
+
+iso_path() {
+  echo "$RELEASE_DIR/omarchy-$OMARCHY_ISO_VERSION.iso"
+}
+
+cmd_fetch_iso() {
+  local version="${1:-$OMARCHY_ISO_VERSION}"
+  local iso="$RELEASE_DIR/omarchy-$version.iso"
+  mkdir -p "$RELEASE_DIR"
+
+  if [[ -f $iso ]]; then
+    echo "Already have $iso"
+  else
+    echo "Downloading omarchy-$version.iso..."
+    curl -fSL -o "$iso" "https://iso.omarchy.org/omarchy-$version.iso"
+  fi
+
+  curl -fsSL -o "$iso.sha256" "https://iso.omarchy.org/omarchy-$version.iso.sha256"
+  (cd "$RELEASE_DIR" && sha256sum -c "$(basename "$iso").sha256")
+}
+
+cmd_build_golden() {
+  local version="${1:-$OMARCHY_ISO_VERSION}"
+  local iso="$RELEASE_DIR/omarchy-$version.iso"
+  [[ -f $iso ]] || cmd_fetch_iso "$version"
+
+  command -v omarchy-pkg-add >/dev/null && omarchy-pkg-add qemu-full edk2-ovmf socat imagemagick tesseract tesseract-data-eng mtools
+  "$VENDOR_DIR/test/integration" "$iso" install-only --reuse-base --no-preview
+  echo "Golden image ready. See $VENDOR_DIR/test-runs/*/base.qcow2."
+}
+
+cmd_test() {
+  local plugin_dir="" mode=everyday section=right handoff=false iso=""
+
+  while (($#)); do
+    case "$1" in
+      --mode) mode="$2"; shift ;;
+      --section) section="$2"; shift ;;
+      --headless) handoff=false ;;
+      --handoff) handoff=true ;;
+      --iso) iso="$2"; shift ;;
+      -*) echo "Unknown option: $1" >&2; exit 1 ;;
+      *) plugin_dir="$1" ;;
+    esac
+    shift
+  done
+
+  [[ -n $plugin_dir ]] || { echo "Usage: crucible test <plugin-dir> [options]" >&2; exit 1; }
+  plugin_dir="$(cd -- "$plugin_dir" && pwd)"
+  [[ -f "$plugin_dir/manifest.json" ]] || { echo "No manifest.json under $plugin_dir" >&2; exit 1; }
+
+  [[ -n $iso ]] || iso="$(iso_path)"
+  [[ -f $iso ]] || { echo "No ISO at $iso — run 'crucible fetch-iso' first." >&2; exit 1; }
+
+  export CRUCIBLE_PLUGIN_DIR="$plugin_dir"
+  export CRUCIBLE_MODE="$mode"
+  export CRUCIBLE_SECTION="$section"
+  export CRUCIBLE_HANDOFF="$handoff"
+
+  local preview_flag=(--no-preview)
+  [[ $handoff == "true" ]] && preview_flag=()
+
+  "$VENDOR_DIR/test/integration" "$iso" plugin-deploy --reuse-base "${preview_flag[@]}"
+}
+
+case "${1:-}" in
+  fetch-iso) shift; cmd_fetch_iso "$@" ;;
+  build-golden) shift; cmd_build_golden "$@" ;;
+  test) shift; cmd_test "$@" ;;
+  *)
+    echo "Usage: crucible {fetch-iso|build-golden|test} ..." >&2
+    exit 1
+    ;;
+esac
