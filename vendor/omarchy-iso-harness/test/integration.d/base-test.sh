@@ -23,8 +23,35 @@ GUEST_HOSTNAME="omarchy-test"
 
 SCENARIO="${SCENARIO:-$(basename "${0%-test.sh}")}"
 
-OVMF_CODE="/usr/share/edk2/x64/OVMF_CODE.4m.fd"
-OVMF_VARS_TEMPLATE="/usr/share/edk2/x64/OVMF_VARS.4m.fd"
+# Crucible: upstream hardcoded Arch's edk2-ovmf path (this is only ever run
+# from an Omarchy dev machine there). Auto-detect across the distros CI
+# actually runs on, in priority order; OMARCHY_INTEGRATION_OVMF_{CODE,VARS}
+# override outright when set.
+detect_ovmf() {
+  local candidates=(
+    "/usr/share/edk2/x64/OVMF_CODE.4m.fd:/usr/share/edk2/x64/OVMF_VARS.4m.fd"      # Arch (edk2-ovmf)
+    "/usr/share/OVMF/OVMF_CODE_4M.fd:/usr/share/OVMF/OVMF_VARS_4M.fd"              # Debian/Ubuntu (ovmf, 4M naming)
+    "/usr/share/OVMF/OVMF_CODE.fd:/usr/share/OVMF/OVMF_VARS.fd"                    # Debian/Ubuntu (ovmf, older naming)
+    "/usr/share/edk2/ovmf/OVMF_CODE.fd:/usr/share/edk2/ovmf/OVMF_VARS.fd"          # Fedora (edk2-ovmf)
+  )
+  local pair code vars
+  for pair in "${candidates[@]}"; do
+    code="${pair%%:*}"; vars="${pair##*:}"
+    if [[ -f $code && -f $vars ]]; then
+      echo "$code" "$vars"
+      return 0
+    fi
+  done
+  echo "No OVMF firmware found — tried: ${candidates[*]}" >&2
+  return 1
+}
+
+if [[ -n ${OMARCHY_INTEGRATION_OVMF_CODE:-} && -n ${OMARCHY_INTEGRATION_OVMF_VARS:-} ]]; then
+  OVMF_CODE="$OMARCHY_INTEGRATION_OVMF_CODE"
+  OVMF_VARS_TEMPLATE="$OMARCHY_INTEGRATION_OVMF_VARS"
+else
+  read -r OVMF_CODE OVMF_VARS_TEMPLATE < <(detect_ovmf)
+fi
 
 BASE_DIR="$ROOT/test-runs/$(basename "$ISO" .iso)-integration"
 RUN_DIR="$BASE_DIR/runs/$(date +%Y%m%d-%H%M%S)-$SCENARIO"
