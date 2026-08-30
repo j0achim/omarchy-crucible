@@ -1,0 +1,37 @@
+name: Tier 0 (fast checks, no VM)
+
+on:
+  push:
+  pull_request:
+
+env:
+  # basecamp/omarchy's default branch is quattro, not master (verified
+  # 2026-08-30 — master exists but is stale and lacks this file). Pinned to
+  # a commit, not a floating branch, so this doesn't silently break again
+  # if the script's interface changes upstream.
+  OMARCHY_VALIDATE_REF: "625c4a1603ff41e523e8e3d85022e6a60ebab944"
+
+jobs:
+  validate-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install sqlite3
+        run: sudo apt-get update && sudo apt-get install -y sqlite3
+
+      - name: Run the plugin's own tests (tests/, via test/run.sh)
+        run: bash test/run.sh
+
+      - name: Fetch omarchy-plugin-validate (standalone script, no full Omarchy install needed)
+        run: |
+          curl -fsSL -o /usr/local/bin/omarchy-plugin-validate \
+            "https://raw.githubusercontent.com/basecamp/omarchy/$OMARCHY_VALIDATE_REF/bin/omarchy-plugin-validate"
+          chmod +x /usr/local/bin/omarchy-plugin-validate
+
+      - name: omarchy plugin validate
+        run: omarchy-plugin-validate "$GITHUB_WORKSPACE"

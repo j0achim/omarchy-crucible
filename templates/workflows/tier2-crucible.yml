@@ -1,0 +1,75 @@
+name: Tier 2 (disposable-VM plugin deploy, via Crucible)
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # Pin the ISO version and the exact Crucible commit for reproducibility —
+  # bump both deliberately, not by floating on "whatever's latest today".
+  OMARCHY_ISO_VERSION: "4.0.1"
+  CRUCIBLE_REF: "master"
+
+jobs:
+  plugin-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: plugin
+
+      - uses: actions/checkout@v4
+        with:
+          repository: j0achim/omarchy-crucible
+          ref: ${{ env.CRUCIBLE_REF }}
+          path: crucible
+
+      # QEMU + related tooling under their Debian/Ubuntu package names —
+      # crucible's own dependency list (qemu-full, edk2-ovmf, socat,
+      # imagemagick, tesseract, tesseract-data-eng, mtools) is Arch-package
+      # naming, since it was built and proven on an Omarchy dev machine.
+      - name: Install QEMU/OCR/mtools dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 qemu-utils ovmf socat \
+            imagemagick tesseract-ocr mtools jq
+
+      - name: Confirm KVM is available
+        run: |
+          test -e /dev/kvm || { echo "No /dev/kvm on this runner — GitHub-hosted Linux runners should have it; a self-hosted runner would need nested virtualization enabled." >&2; exit 1; }
+          sudo chmod 666 /dev/kvm
+
+      # A 6GB ISO shouldn't be re-downloaded every run; the base-image
+      # install itself is cheap (~2 minutes, confirmed) so it isn't cached —
+      # only the thing that's actually slow to fetch is.
+      - name: Cache the Omarchy ISO
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/crucible/release
+          key: omarchy-iso-${{ env.OMARCHY_ISO_VERSION }}
+
+      # Same tool the official omarchy-iso nightly build workflow uses for
+      # this exact problem (a multi-GB disk image on a standard runner).
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+
+      - name: crucible fetch-iso
+        run: OMARCHY_ISO_VERSION="$OMARCHY_ISO_VERSION" ./crucible/bin/crucible fetch-iso
+
+      - name: crucible build-golden
+        run: OMARCHY_ISO_VERSION="$OMARCHY_ISO_VERSION" ./crucible/bin/crucible build-golden
+
+      - name: crucible test (headless)
+        run: OMARCHY_ISO_VERSION="$OMARCHY_ISO_VERSION" ./crucible/bin/crucible test "$GITHUB_WORKSPACE/plugin" --headless
+
+      - name: Upload screenshots/logs on any outcome
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crucible-test-runs
+          path: crucible/vendor/omarchy-iso-harness/test-runs/**/runs/**
+          retention-days: 7

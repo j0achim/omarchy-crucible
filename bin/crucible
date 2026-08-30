@@ -24,6 +24,15 @@
 #                                              the gate passes, for manual
 #                                              inspection
 #     --iso PATH                              Override the ISO path
+#   crucible init-ci <plugin-dir> [--force]   Write GitHub Actions workflows
+#                                              (Tier 0 fast checks + Tier 2
+#                                              Crucible deploy) into the
+#                                              plugin repo's
+#                                              .github/workflows/. Writes
+#                                              only — review, commit, and
+#                                              push it yourself. Skips files
+#                                              that already exist unless
+#                                              --force.
 #
 # The base image (and everything else QEMU-related) is a local build
 # artifact — never shared, never committed. Delete
@@ -104,12 +113,68 @@ cmd_test() {
   "$VENDOR_DIR/test/integration" "$iso" plugin-deploy --reuse-base "${preview_flag[@]}"
 }
 
+cmd_init_ci() {
+  local plugin_dir="" force=false
+
+  while (($#)); do
+    case "$1" in
+      --force) force=true ;;
+      -*) echo "Unknown option: $1" >&2; exit 1 ;;
+      *) plugin_dir="$1" ;;
+    esac
+    shift
+  done
+
+  [[ -n $plugin_dir ]] || { echo "Usage: crucible init-ci <plugin-dir> [--force]" >&2; exit 1; }
+  plugin_dir="$(cd -- "$plugin_dir" && pwd)"
+  [[ -f "$plugin_dir/manifest.json" ]] || { echo "No manifest.json under $plugin_dir — is this a plugin repo?" >&2; exit 1; }
+
+  local dest="$plugin_dir/.github/workflows"
+  mkdir -p "$dest"
+
+  local wrote=() skipped=()
+  local f
+  for f in "$REPO_DIR"/templates/workflows/*.yml; do
+    local name
+    name="$(basename "$f")"
+    if [[ -f "$dest/$name" && $force != "true" ]]; then
+      skipped+=("$name")
+      continue
+    fi
+    cp "$f" "$dest/$name"
+    wrote+=("$name")
+  done
+
+  ((${#wrote[@]} > 0)) && printf 'Wrote: %s\n' "${wrote[@]/#/$dest/}"
+  ((${#skipped[@]} > 0)) && printf 'Skipped (already exists, use --force to overwrite): %s\n' "${skipped[@]/#/$dest/}"
+
+  cat <<EOF
+
+These files are written, not committed. Review them, then:
+  cd "$plugin_dir" && git add .github/workflows && git commit -m "Add Crucible CI"
+
+If the push is rejected with something like "refusing to allow an OAuth
+App to create or update workflow ... without workflow scope", your git
+credentials need the workflow scope added — a real one hit this exact
+error first: run 'gh auth refresh -s workflow' in an actual terminal (the
+OAuth device-flow prompt doesn't render right through a non-interactive
+session), then push again.
+
+Tier 0 runs on every push with no setup. Tier 2 (the real disposable-VM
+deploy) needs a KVM-capable runner — GitHub-hosted ubuntu-latest has one —
+and checks out this Crucible repo fresh each run, pinned by CRUCIBLE_REF at
+the top of tier2-crucible.yml (currently "master" — pin to a commit SHA
+instead if you want stronger reproducibility).
+EOF
+}
+
 case "${1:-}" in
   fetch-iso) shift; cmd_fetch_iso "$@" ;;
   build-golden) shift; cmd_build_golden "$@" ;;
   test) shift; cmd_test "$@" ;;
+  init-ci) shift; cmd_init_ci "$@" ;;
   *)
-    echo "Usage: crucible {fetch-iso|build-golden|test} ..." >&2
+    echo "Usage: crucible {fetch-iso|build-golden|test|init-ci} ..." >&2
     exit 1
     ;;
 esac

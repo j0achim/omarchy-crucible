@@ -10,6 +10,7 @@ screenshot and a pass/fail.
 crucible fetch-iso              # download + checksum-verify the official Omarchy ISO
 crucible build-golden           # unattended install once, produces a reusable base image
 crucible test ~/path/to/plugin  # deploy + validate + enable + restart + IPC check + screenshot
+crucible init-ci ~/path/to/plugin  # write GitHub Actions workflows into the plugin repo
 ```
 
 ## Why
@@ -50,7 +51,10 @@ convention-named scripts in the plugin repo:
 | `test/run.sh` | on the host, no VM | Fast pure-logic tests / `omarchy plugin validate` — run this in CI on every push; it needs no VM |
 
 None are required. A plugin with no `test/` directory at all still gets
-validated, deployed, enabled, and screenshotted using Omarchy's own defaults.
+validated, deployed, enabled, and screenshotted using Omarchy's own
+defaults — confirmed directly against two real third-party plugins that
+had never heard of Crucible. Run `crucible init-ci` (see CI, below) to wire
+this into GitHub Actions.
 
 ## Two deploy modes
 
@@ -61,6 +65,45 @@ validated, deployed, enabled, and screenshotted using Omarchy's own defaults.
   — `git clone file://` only ever sees committed refs); goes through the
   real `omarchy plugin add file://...` path a real installer uses. Run this
   once before tagging a release, not on every iteration.
+
+## CI
+
+```bash
+crucible init-ci ~/path/to/plugin [--force]
+```
+
+Writes `templates/workflows/tier0.yml` and `tier2-crucible.yml` into the
+plugin repo's `.github/workflows/` — nothing plugin-specific in either
+file, both proven against three unrelated real plugins (this project's own
+[Bolt](https://github.com/j0achim/omarchy-bolt), plus two third-party
+plugins with no Crucible awareness at all). It only writes files; review,
+commit, and push them yourself:
+
+```bash
+cd ~/path/to/plugin
+git add .github/workflows && git commit -m "Add Crucible CI"
+git push
+```
+
+**Tier 0** (`tier0.yml`) runs the plugin's own `test/run.sh` plus a
+standalone-fetched `omarchy-plugin-validate` on every push — no VM, no
+Omarchy install needed on the runner.
+
+**Tier 2** (`tier2-crucible.yml`) checks out this Crucible repo fresh each
+run (pinned by `CRUCIBLE_REF` at the top of the file — `master` by default;
+pin a commit SHA for stronger reproducibility) and runs the real
+disposable-VM deploy. Needs a KVM-capable runner — GitHub-hosted
+`ubuntu-latest` has one — and caches only the 6GB ISO between runs, since
+the unattended install itself is fast enough (~2 minutes, confirmed) not to
+bother caching.
+
+**One real gotcha, hit firsthand:** pushing a workflow file for the first
+time can get rejected — `refusing to allow an OAuth App to create or
+update workflow ... without workflow scope`. GitHub requires the
+`workflow` OAuth scope specifically for anything under
+`.github/workflows/`. Fix: `gh auth refresh -s workflow` in a real
+terminal (the OAuth device-flow prompt needs an actually-interactive
+session), then push again.
 
 ## How it works
 
