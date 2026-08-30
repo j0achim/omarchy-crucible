@@ -61,13 +61,18 @@ case "$MODE" in
       ssh_guest "omarchy-plugin-validate ~/.config/omarchy/plugins/$PLUGIN_ID"
     check "rescanPlugins" \
       omarchy_cli "omarchy-shell shell rescanPlugins"
-    check "plugin enable --yes" \
-      omarchy_cli "omarchy plugin enable $PLUGIN_ID --section $SECTION --yes"
+    check "plugin enable" \
+      omarchy_cli "omarchy plugin enable $PLUGIN_ID --section $SECTION"
     ;;
   fidelity)
     [[ -d "$PLUGIN_DIR/.git" ]] || { echo "fidelity mode needs a git repo (commit first, even to a throwaway branch)" >&2; exit 1; }
-    check "omarchy plugin add file://... --yes --enable" \
-      omarchy_cli "omarchy plugin add file://$STAGING --yes --enable --section $SECTION"
+    # `add` doesn't take --section, and --yes skips its own interactive
+    # placement picker with no override — so add un-enabled, then enable
+    # explicitly, same as everyday mode, for consistent placement control.
+    check "omarchy plugin add file://... --yes" \
+      omarchy_cli "omarchy plugin add file://$STAGING --yes"
+    check "plugin enable" \
+      omarchy_cli "omarchy plugin enable $PLUGIN_ID --section $SECTION"
     ;;
   *)
     echo "Unknown CRUCIBLE_MODE: $MODE" >&2
