@@ -351,6 +351,24 @@ wait_for_ssh() {
   done
 }
 
+# Crucible addition: SSH answering doesn't mean Quickshell has finished
+# starting — first-boot timing varies with host performance (a real CI run
+# on a GitHub-hosted runner needed longer than this dev machine ever did).
+wait_for_shell_ipc() {
+  local timeout="$1" failure_name="${2:-failure-shell-ipc-timeout}" waited=0
+
+  while ! omarchy_cli "omarchy-shell shell ping" >/dev/null 2>&1; do
+    if ((waited >= timeout)); then
+      capture_console "$failure_name"
+      echo "Timed out after ${timeout}s waiting for omarchy-shell to answer" >&2
+      return 1
+    fi
+
+    sleep 5
+    ((waited += 5))
+  done
+}
+
 # Authorize SSH the way a person would when the guest has no key yet (or a
 # reset just scrubbed it): console login on a spare TTY, then a bootstrap
 # script fetched from a throwaway host HTTP server.
@@ -627,8 +645,12 @@ install_phase() {
   ssh_sudo "mkdir -p /etc/sddm.conf.d && printf '[Autologin]\nUser=$GUEST_USER\nSession=omarchy\n' >/etc/sddm.conf.d/50-crucible-autologin.conf"
   ssh_sudo "systemctl reboot" || true
   wait_for_ssh 120 "failure-autologin-reboot-timeout"
-  check "quickshell reaches a live IPC session after autologin" \
-    omarchy_cli "omarchy-shell shell ping"
+  # A retry, not a one-shot check: SSH answering doesn't mean Quickshell has
+  # finished starting yet, and how long that takes varies with host
+  # performance — a real CI run hit this exact race (SSH up, IPC not yet).
+  # Fail the whole build loudly (this runs under set -e, uncaught) rather
+  # than silently saving a base image nothing has confirmed actually works.
+  wait_for_shell_ipc 60 "failure-autologin-shell-timeout"
   capture_console "success-install-autologin"
 
   log "Installed system is up. Saving base image."
